@@ -1,3 +1,8 @@
+/*
+  Teensy LC controller for H-Bridge coil drivers
+  April 4, 2018
+  Ben Avants
+*/
 
 // Teensy PWM pin 17 can be used for 3.3 or 5 volt PWM on FTM1
 const char PWMPin = 22;
@@ -42,6 +47,15 @@ int totalPulses = 0;
 // Controls for Bi-Frequency pulse mode: ie. each pulse is split into equal parts of the primary and secondary frequencies
 boolean doBifreq = false;
 boolean pulseDone = false;
+
+// Controls for sweep mode: stimulate from a start frequerncy to a stop frequency in defined steps that last a certain time
+boolean doSweep = false;
+uint64_t startSweepFreq = 100000.0; // 100 kHz
+uint64_t nextSweepFreq =  100000.0; // 100 kHz
+uint64_t stopSweepFreq =  120000.0; // 120 kHz
+uint64_t sweepStepFreq =     500.0; // 500 Hz
+unsigned long sweepStepMicros = 500000ul;
+unsigned long lastSweepStep = 0ul;
 
 // Blink time count
 boolean doBlink = false;
@@ -90,10 +104,7 @@ void loop() {
         digitalWriteFast(BIFREQ2Pin,LOW);
         if (totalPulses > 0)  {
           if (pulseCount++ >= totalPulses)  {
-            Enable = false;
-            pinMode(PWMPin,OUTPUT);
-            digitalWriteFast(PWMPin,LOW);
-            Serial.println("Stopped");
+            stopCmd();
           }
         }
         pulseMicros = pulseOffMicros;
@@ -110,6 +121,18 @@ void loop() {
       pulseMicros = pulseOnMicros;
     }
     lastPulse = loopMicros;
+  }
+  if (Enable && doSweep && loopMicros - lastSweepStep >= sweepStepMicros)  {
+    analogWriteFrequency(PWMPin, actualFreq);
+    if (nextSweepFreq >= stopSweepFreq) {
+      doSweep = false;
+      stopCmd();
+      return;
+    }
+    nextSweepFreq += sweepStepFreq;
+    targetFreq = nextSweepFreq;
+    calculateVals();
+    lastSweepStep = loopMicros;
   }
   if (doBlink && loopMicros - lastBlink >= 500000) {
     digitalWriteFast(13,!digitalReadFast(13));
@@ -145,6 +168,7 @@ inline void stopCmd() {
 inline void startCmd()  {
   if (!Enable)  {
     Enable = true;
+    lastSweepStep = loopMicros;
     lastPulse = loopMicros;
     pulseCount = 0;
     pulseMicros = pulseOnMicros;
@@ -177,6 +201,21 @@ inline void parseMessage() {
         //Serial.println(actualFreq);
       }
     }
+  }
+  else if (message.startsWith("sweep")) {
+    if (Enable) {
+      Serial.println("Cannot start sweep with stimulation running");
+      return;
+    }
+    doSweep = true;
+    targetFreq = startSweepFreq;
+    calculateVals();
+    analogWriteFrequency(PWMPin, actualFreq);
+    nextSweepFreq = startSweepFreq + sweepStepFreq;
+    targetFreq = nextSweepFreq;
+    calculateVals();
+    startCmd();
+    Serial.println("Sweep started");
   }
   else if (message.startsWith("seco")) {
     int ind = message.indexOf(':',4);
@@ -255,6 +294,69 @@ inline void parseMessage() {
           Serial.println(float(pulseOnMicros) / float(pulsePeriod),3);
         }
       }
+    }
+  }
+  else if (message.startsWith("swrate")) {
+    int ind = message.indexOf(':',6);
+    if (ind > 0) {
+      double val = message.substring(ind+1).toFloat();
+      if (val > 0 && val < 100) {
+        sweepStepMicros = (unsigned long)((val * 1000000.0) + 0.5);
+        Serial.print("Sweep step rate set to ");
+        Serial.print(val);
+        Serial.println(" Hz.");
+      }
+      else  {
+        Serial.println("Invalid Sweep Step Rate");
+      }
+    }
+    else  {
+      Serial.println("Invalid Sweep Step Rate");
+    }
+  }
+  else if (message.startsWith("swstart")) {
+    int ind = message.indexOf(':',7);
+    if (ind > 0) {
+      float val = atof(message.substring(ind+1).c_str());
+      if (val >= 2500 && val <= 750000) {
+        startSweepFreq = val;
+      }
+      else  {
+        Serial.println("Invalid frequency");
+      }
+    }
+    else  {
+      Serial.println("Invalid frequency");
+    }
+  }
+  else if (message.startsWith("swstep")) {
+    int ind = message.indexOf(':',6);
+    if (ind > 0) {
+      float val = atof(message.substring(ind+1).c_str());
+      if (val > 0 && val <= 750000) {
+        sweepStepFreq = val;
+      }
+      else  {
+        Serial.println("Invalid frequency");
+      }
+    }
+    else  {
+      Serial.println("Invalid frequency");
+    }
+  }
+  else if (message.startsWith("swstop")) {
+    int ind = message.indexOf(':',6);
+    if (ind > 0) {
+      float val = atof(message.substring(ind+1).c_str());
+      if (val >= 2500 && val <= 750000) {
+        stopSweepFreq = val;
+      }
+      else  {
+        Serial.println("Invalid frequency");
+      }
+    }
+    else  {
+      Serial.println("Invalid frequency");
     }
   }
   else if (message.startsWith("count")) {
