@@ -14,6 +14,10 @@
  * This requires conversion from float or int values in regular Hz... managed by this program.
  */
 
+// CHANGED FROM PREVIOUS VERSIONS
+// Frequency is now set as the target BIPAHSIC frequency, not the fundamental frequency.  The uC sets the clocks to TWICE
+// the desired frequnecy to get the target output.
+
 // SI5351B breakout mounts directly to GND-3V-23-22--17, 17 is optional, but all
 // intermediate pins including 17 are covered with PCB - may be usable but tight space.
 
@@ -58,13 +62,13 @@ class MCP4
   MCP4()    {
     #ifndef MCP4_H_
     #define MCP4_H_
-	#define R_OFFSET	4700
-	#define T_SLOPE		0.04203
-	#define T_I_SLOPE	23.7925291458482
-	#define T_B			62.75
-	#define MIN_NS		260
-	#define MAX_NS		8667
-	// These pulse lengths enable a 0.9 duty cycle for stim frequencies between ~50 kHz and 1.73 MHz
+  	#define R_OFFSET	4700
+  	#define T_SLOPE		0.04203
+  	#define T_I_SLOPE	23.7925291458482
+  	#define T_B			62.75
+  	#define MIN_NS		260
+  	#define MAX_NS		8667
+	  // These pulse lengths enable a 0.9 duty cycle for stim frequencies between ~50 kHz and 1.73 MHz
     // Bits 3 & 2 are the command bits - command sets as follows:
     #define WRITE_BITS  B00000000
     #define INC_BITS    B00000100
@@ -104,7 +108,7 @@ class MCP4
     MCP4662_BITS = addr_bits;
     MCP4662_ADDR = MCP4662_BASE_ADDR | addr_bits;
     mcp4_wire->beginTransmission(MCP4662_ADDR);
-	//mcp4_wire->beginTransmission(B00101110);
+	  //mcp4_wire->beginTransmission(B00101110);
     wire_error = mcp4_wire->endTransmission();
     if (wire_error == 0) {
       max_resistance = maxResistance;
@@ -115,8 +119,8 @@ class MCP4
       resistance0 = wiper0 * wiper_2_resistance;
       wiper1 = round(resistance1_init * resistance_2_wiper);
       resistance1 = wiper1 * wiper_2_resistance;
-	  total_resistance = resistance0 + resistance1 + R_OFFSET;
-	  pulse_time = (total_resistance * T_SLOPE) + T_B;
+  	  total_resistance = resistance0 + resistance1 + R_OFFSET;
+  	  pulse_time = (total_resistance * T_SLOPE) + T_B;
       if (!write(WIP_0_VOL, wiper0))  {
         return is_connected = false;
       }
@@ -229,7 +233,10 @@ class MCP4
   }
   
   bool set_duty_cycle(float frequency, float duty)	{
-	  float period = duty * 1000000000 / frequency;
+    // IMPORTANT - function assumes 'frequency' is actually half the fundamental frequency because other parts of the
+    // program work in output frequency, not fundamental frequency.  Must be modified if passed frequency is the fundamental frequency.
+	  float period = duty * 500000000 / frequency;
+    // float period = duty * 1000000000 / frequency;
 	  return set_pulse_time(period);
   }
 };
@@ -303,7 +310,8 @@ IntervalTimer programTimer;
 // Variables for programming / running the stimulation IC
 volatile boolean programChange = false;
 uint8_t programState   = 0; // 0 - Power, 1 - '1' bit, 2 - '0' bit
-const float bitMicros  = 250.0; // Duration in microseconds of each bit
+float bitMicros1       = 426.67; // Duration in microseconds of each '1' bit
+float bitMicros0       = 320.00; // Duration in microseconds of each '1' bit
 const uint8_t numBits  = 20; // Number of bits per program cycle
 boolean progBits[20];
 const uint8_t numHead  = 14; // Number of bits in the header
@@ -385,18 +393,14 @@ void setup() {
   // Initialize SI5351 - XRCGB25M000F1H00R0 25 MHz xtal has 6pF load C, using Wire1, 400 kHz bus
   SI5351Detected = si5351.init2(SI5351_CRYSTAL_LOAD_6PF, 0, calibrationOffset.value, 1);
   if (SI5351Detected) {
-    // Set clocks 0, 1, & 2 to use the same MultiSynth source
-    // si5351.set_clock_source(SI5351_CLK0, SI5351_CLK_SRC_MS0);
-    // si5351.set_clock_source(SI5351_CLK1, SI5351_CLK_SRC_MS0);
-    // si5351.set_clock_source(SI5351_CLK2, SI5351_CLK_SRC_MS0);
     si5351.set_freq(freq_set_1, SI5351_CLK0); // Set output
-	si5351.set_freq(freq_set_2, SI5351_CLK1); // Set output
-	si5351.set_freq(freq_set_3, SI5351_CLK2); // Set output
+	  si5351.set_freq(freq_set_2, SI5351_CLK1); // Set output
+	  si5351.set_freq(freq_set_3, SI5351_CLK2); // Set output
     disableAll(); // Disable all clocks after first frequency set
     si5351.update_status();
-	if (mcp4.is_connected)	{
-	  mcp4.set_duty_cycle(frequency_1, target_duty);
-	}
+  	if (mcp4.is_connected)	{
+  	  mcp4.set_duty_cycle(frequency_1, target_duty);
+  	}
     Serial.println("SI5351 initialized");
   }
   else  {
@@ -423,8 +427,11 @@ void loop() {
     if (programState == 0)  {
       programTimer.begin(programmer,stimMicros);
     }
-    else {
-      programTimer.begin(programmer,bitMicros);
+    else if (programState == 1)  {
+      programTimer.begin(programmer,bitMicros1);
+    }
+    else  {
+      programTimer.begin(programmer,bitMicros0);
     }
   }
   if (Enable && doTerminate && loopMicros - terminateMicros >= terminateDuration) {
@@ -515,77 +522,77 @@ inline void parseMessage() {
   else if (message.startsWith("ICset")) {
     int ind = message.indexOf(':',5);
     if (ind > 0) {
-	  ind += 1;
-	  int c1 = message.indexOf(',',ind);
+      ind += 1;
+      int c1 = message.indexOf(',',ind);
       if (c1 > 0) {
-		c1 += 1;
-		int c2 = message.indexOf(',',c1);
-		if (c2 > 0) {
-		  c2 += 1;
-		  float val1 = atof(message.substring(ind).c_str());
-		  float val2 = atof(message.substring(c1).c_str());
-		  float val3 = atof(message.substring(c2).c_str());
-		  if (val1 >= 2500 && val1 <= 2000000 && val2 >= 2500 && val2 <= 2000000 && val3 >= 2500 && val3 <= 2000000) {
-			frequency_1 = val1;
-			frequency_2 = val2;
-			frequency_3 = val3;
-			freq_set_1 = (uint64_t)((val1 * SI5351_FREQ_MULT) + 0.5);
-			freq_set_2 = (uint64_t)((val2 * SI5351_FREQ_MULT) + 0.5);
-			freq_set_3 = (uint64_t)((val3 * SI5351_FREQ_MULT) + 0.5);
-			if (auto_duty == 1)	{
-			  mcp4.set_duty_cycle(frequency_1, target_duty);
-			}
-			else if (auto_duty == 2)	{
-			  mcp4.set_duty_cycle(frequency_2, target_duty);
-			}
-			else if (auto_duty == 3)	{
-			  mcp4.set_duty_cycle(frequency_3, target_duty);
-			}
-			si5351.set_freq(freq_set_1,SI5351_CLK0);
-			si5351.set_freq(freq_set_2,SI5351_CLK1);
-			si5351.set_freq(freq_set_3,SI5351_CLK2);
-			si5351.update_status();
-			if (!si5351.dev_status.LOL_A) {
-			  printStatus();
-			}
-			else  {
-			  Serial.print("LossOfLock_A: ");
-			  Serial.println(si5351.dev_status.LOL_A);
-			}
-		  }
-		  else{
-			Serial.print("At least one value out of range: ");
-			Serial.print(val1);
-			Serial.print("\t");
-			Serial.print(val2);
-			Serial.print("\t");
-			Serial.println(val3);
-		  }
-		}
-		else{
-		  Serial.println("Comma 2 not found");
-		}
-	  }
-	  else{
-		Serial.println("Comma 1 not found");
-	  }
-	}
-	else{
-	  Serial.println("Colon not found");
-	}
+        c1 += 1;
+        int c2 = message.indexOf(',',c1);
+        if (c2 > 0) {
+        c2 += 1;
+        float val1 = atof(message.substring(ind).c_str());
+        float val2 = atof(message.substring(c1).c_str());
+        float val3 = atof(message.substring(c2).c_str());
+        if (val1 >= 5000 && val1 <= 1000000 && val2 >= 5000 && val2 <= 1000000 && val3 >= 5000 && val3 <= 1000000) {
+          frequency_1 = val1;
+          frequency_2 = val2;
+          bitMicros1 = 32000000 / val2;  // Calculate '1' bit microseconds
+          frequency_3 = val3;
+          bitMicros0 = 32000000 / val3;  // Calculate '0' bit microseconds
+          freq_set_1 = (uint64_t)((val1 * SI5351_FREQ_MULT) + 0.5) << 1;
+          freq_set_2 = (uint64_t)((val2 * SI5351_FREQ_MULT) + 0.5) << 1;
+          freq_set_3 = (uint64_t)((val3 * SI5351_FREQ_MULT) + 0.5) << 1;
+          if (auto_duty == 1)	{
+            mcp4.set_duty_cycle(frequency_1, target_duty);
+          }
+          else if (auto_duty == 2)	{
+            mcp4.set_duty_cycle(frequency_2, target_duty);
+          }
+          else if (auto_duty == 3)	{
+            mcp4.set_duty_cycle(frequency_3, target_duty);
+          }
+          si5351.set_freq(freq_set_1,SI5351_CLK0);
+          si5351.set_freq(freq_set_2,SI5351_CLK1);
+          si5351.set_freq(freq_set_3,SI5351_CLK2);
+          si5351.update_status();
+          if (!si5351.dev_status.LOL_A) {
+            printStatus();
+          }
+          else  {
+            Serial.print("LossOfLock_A: ");
+            Serial.println(si5351.dev_status.LOL_A);
+          }
+        }
+        else{
+        Serial.print("At least one value out of range: ");
+        Serial.print(val1);
+        Serial.print("\t");
+        Serial.print(val2);
+        Serial.print("\t");
+        Serial.println(val3);
+        }
+      }
+      else{
+      Serial.println("Comma 2 not found");
+      }
+      }
+      else{
+      Serial.println("Comma 1 not found");
+      }
+    }
+    else{
+    Serial.println("Colon not found");
+    }
   }
   else if (message.startsWith("freq1")) {
     int ind = message.indexOf(':',5);
     if (ind > 0) {
       float val = atof(message.substring(ind+1).c_str());
-      if (val >= 2500 && val <= 2000000) {
+      if (val >= 5000 && val <= 1000000) {
         frequency_1 = val;
-        val *= SI5351_FREQ_MULT;
-        val += 0.5;
-		if (auto_duty == 1)	{
-		  mcp4.set_duty_cycle(frequency_1, target_duty);
-		}
-        freq_set_1 = (uint64_t)val;
+        freq_set_1 = (uint64_t)((val1 * SI5351_FREQ_MULT) + 0.5) << 1;
+    		if (auto_duty == 1)	{
+    		  mcp4.set_duty_cycle(frequency_1, target_duty);
+    		}
         si5351.set_freq(freq_set_1,SI5351_CLK0);
         si5351.update_status();
         if (!si5351.dev_status.LOL_A) {
@@ -611,12 +618,11 @@ inline void parseMessage() {
       float val = atof(message.substring(ind+1).c_str());
       if (val >= 2500 && val <= 2000000) {
         frequency_2 = val;
-        val *= SI5351_FREQ_MULT;
-        val += 0.5;
-        freq_set_2 = (uint64_t)val;
-		if (auto_duty == 2)	{
-		  mcp4.set_duty_cycle(frequency_2, target_duty);
-		}
+        bitMicros1 = 32000000 / val;  // Calculate '1' bit microseconds
+        freq_set_2 = (uint64_t)((val2 * SI5351_FREQ_MULT) + 0.5) << 1;
+    		if (auto_duty == 2)	{
+    		  mcp4.set_duty_cycle(frequency_2, target_duty);
+    		}
         si5351.set_freq(freq_set_2,SI5351_CLK1);
         si5351.update_status();
         if (!si5351.dev_status.LOL_A) {
@@ -642,12 +648,11 @@ inline void parseMessage() {
       float val = atof(message.substring(ind+1).c_str());
       if (val >= 2500 && val <= 2000000) {
         frequency_3 = val;
-        val *= SI5351_FREQ_MULT;
-        val += 0.5;
-        freq_set_3 = (uint64_t)val;
-		if (auto_duty == 3)	{
-		  mcp4.set_duty_cycle(frequency_3, target_duty);
-		}
+        bitMicros0 = 32000000 / val;  // Calculate '0' bit microseconds
+        freq_set_3 = (uint64_t)((val3 * SI5351_FREQ_MULT) + 0.5) << 1;
+    		if (auto_duty == 3)	{
+    		  mcp4.set_duty_cycle(frequency_3, target_duty);
+    		}
         si5351.set_freq(freq_set_3,SI5351_CLK2);
         si5351.update_status();
         if (!si5351.dev_status.LOL_A) {
@@ -992,6 +997,7 @@ void sweeper()  {
   sweepTimer.begin(sweeper,sweepStepMicros);
 }
 
+// Callback function for programming and running the ASIC
 void programmer() {
   programChange = true;
 }
