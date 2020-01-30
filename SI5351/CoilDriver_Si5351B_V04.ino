@@ -589,7 +589,7 @@ inline void parseMessage() {
       float val = atof(message.substring(ind+1).c_str());
       if (val >= 5000 && val <= 1000000) {
         frequency_1 = val;
-        freq_set_1 = (uint64_t)((val1 * SI5351_FREQ_MULT) + 0.5) << 1;
+        freq_set_1 = (uint64_t)((val * SI5351_FREQ_MULT) + 0.5) << 1;
     		if (auto_duty == 1)	{
     		  mcp4.set_duty_cycle(frequency_1, target_duty);
     		}
@@ -619,7 +619,7 @@ inline void parseMessage() {
       if (val >= 2500 && val <= 2000000) {
         frequency_2 = val;
         bitMicros1 = 32000000 / val;  // Calculate '1' bit microseconds
-        freq_set_2 = (uint64_t)((val2 * SI5351_FREQ_MULT) + 0.5) << 1;
+        freq_set_2 = (uint64_t)((val * SI5351_FREQ_MULT) + 0.5) << 1;
     		if (auto_duty == 2)	{
     		  mcp4.set_duty_cycle(frequency_2, target_duty);
     		}
@@ -649,7 +649,7 @@ inline void parseMessage() {
       if (val >= 2500 && val <= 2000000) {
         frequency_3 = val;
         bitMicros0 = 32000000 / val;  // Calculate '0' bit microseconds
-        freq_set_3 = (uint64_t)((val3 * SI5351_FREQ_MULT) + 0.5) << 1;
+        freq_set_3 = (uint64_t)((val * SI5351_FREQ_MULT) + 0.5) << 1;
     		if (auto_duty == 3)	{
     		  mcp4.set_duty_cycle(frequency_3, target_duty);
     		}
